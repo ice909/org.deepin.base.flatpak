@@ -9,6 +9,7 @@ appid=$1
 version=$2
 # 打包版本号，默认为0
 tweak=${3:-"0"}
+Arch=$(uname -m)
 
 # flatpak runtime在ostree中的分支名
 ref="flathub:runtime/$appid/x86_64/$version"
@@ -44,7 +45,7 @@ glVersion=$(grep -A100 'Extension org.freedesktop.Platform.GL' "$workdir/binary/
 # 仅支持最新安装到 lib/x86_64-linux-gnu/GL 的GL版本，其他版本还未测试
 if ! grep -A100 'Extension org.freedesktop.Platform.GL' "$workdir/binary/files/metadata" |grep -E 'directory|Extension'|head -n2|grep lib/x86_64-linux-gnu/GL; then
     echo "暂不支持依赖 $glVersion 版本的GL扩展"
-    exit 1
+    exit -1
 fi
 
 # 下载GL扩展
@@ -79,18 +80,31 @@ ln -s usr/lib64 ./
 cp -r usr/etc ./
 
 # 删除certs，因为玲珑会使用宿主机的certs目录
-rm etc/ssl/certs
+rm -rf etc/ssl/certs
 
 # 给base添加一些必要的文件，文件具体作用见 README.md
 cp -rP $project/patch_rootfs/* ./
 
-# 提交到layer中
-cd /tmp
-rm -rf "$HOME/.cache/linglong-builder/layers/main/$APPID/$VERSION/x86_64" || true
-mkdir -p "$HOME/.cache/linglong-builder/layers/main/$APPID/$VERSION/x86_64"
-cp -r "$workdir/binary" "$HOME/.cache/linglong-builder/layers/main/$APPID/$VERSION/x86_64/"
-cp -r "$workdir/develop" "$HOME/.cache/linglong-builder/layers/main/$APPID/$VERSION/x86_64/"
-# develop和binary共用同一个files目录
-cp -r "$workdir/binary/files" "$HOME/.cache/linglong-builder/layers/main/$APPID/$VERSION/x86_64/develop/"
+# 如果没有tmp目录,手动创建出来
+if [ ! -d tmp ]; then
+    mkdir -p tmp
+fi
+
+rm -rf "$workdir/binary/files/lib/systemd" || true
+
+cd $project
+
+builderRef="main:$APPID/$VERSION/$Arch"
+
+ll-builder remove "$builderRef" || true
+
+# 导入转置的base 到 builder 里
+ll-builder import-dir "$workdir/binary"
+mkdir -p "$workdir/develop/files"
+# 将转置的base文件复制到develop目录中
+cp -r $workdir/binary/files/* "$workdir/develop/files/"
+ll-builder import-dir "$workdir/develop"
+ll-builder push --repo-url https://repo-dev.cicd.getdeepin.org --repo-name old
+
 # 清理临时工作目录
 rm -rf "$workdir"
